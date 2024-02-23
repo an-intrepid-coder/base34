@@ -11,6 +11,7 @@ class Console:
             Message("Eventually this will be a game! For now it's a testing ground. Enjoy!", 0),
             Message("Use the mouse to move around. 4 TU to move (x2 diagonal cost).", 0),
             Message("Use the WASD keys to move the camera, or middle-mouse-click.", 0),
+            Message("shift + left-click on tile adjacent to player to change facing for 1 TU.", 0),
             Message("Use the '[' or ']' keys, or mousewheel, to scroll the console.", 0),
             Message("Press the HOME key to reset the console scroll.", 0),
         ]

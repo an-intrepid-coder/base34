@@ -18,11 +18,12 @@ class Game:
         self.movement_range_cell_surf = pygame.Surface((CELL_SIZE, CELL_SIZE), flags=SRCALPHA)
         self.movement_range_cell_surf.set_colorkey(ALPHA_KEY)
         self.movement_range_cell_surf.fill(ALPHA_KEY)
-        pygame.draw.rect(self.movement_range_cell_surf, COLOR_MOVEMENT_RANGE, self.movement_range_cell_surf.get_rect(), 1)
+        self.movement_range_cell_surf.fill(COLOR_MOVEMENT_RANGE)
+        pygame.draw.rect(self.movement_range_cell_surf, "green", self.movement_range_cell_surf.get_rect(), 1)
         self.foggy_cell_surf = pygame.Surface((CELL_SIZE, CELL_SIZE), flags=SRCALPHA)
         self.foggy_cell_surf.set_colorkey(ALPHA_KEY)
         self.foggy_cell_surf.fill(ALPHA_KEY)
-        self.foggy_cell_surf.fill((60, 60, 60))
+        self.foggy_cell_surf.fill(COLOR_FOG)
         self.unseen_cell_surf = pygame.Surface((CELL_SIZE, CELL_SIZE), flags=SRCALPHA)
         self.unseen_cell_surf.set_colorkey(ALPHA_KEY)
         self.end_turn_surf = pygame.Surface((SIDE_HUD_WIDTH, HUD_FONT_SIZE + 2), flags=SRCALPHA)
@@ -33,8 +34,14 @@ class Game:
                 ((self.end_turn_surf.get_width() // 2 - end_turn_txt.get_width() // 2) + 1, 1))
         self.dude_1_sheet = pygame.image.load(DUDE_1_PATH)
         self.dude_1_sheet.convert_alpha()
+        self.fog_sheet = pygame.image.load(FOG_PATH)
+        self.fog_sheet.convert_alpha()
+        self.pillar_1_sheet = pygame.image.load(PILLAR_1_PATH)
+        self.pillar_1_sheet.convert_alpha()
+        self.floor_1_sheet = pygame.image.load(FLOOR_1_PATH)
+        self.floor_1_sheet.convert_alpha()
         self.entity_sheets = { 
-            self.dude_1_sheet: {"frames": 2, "regular": {}}, # maybe something for weapons and such later TODO
+            self.dude_1_sheet: {"frames": 2, "regular": {}}, 
         }
         for sheet in self.entity_sheets.keys():
             for direction in list(filter(lambda x: x != "wait", DIRECTIONS.keys())):
@@ -42,9 +49,9 @@ class Game:
                 for index in range(self.entity_sheets[sheet]["frames"]):
                     frames.append(grab_cell_from_sheet(sheet, index, direction))
                 self.entity_sheets[sheet]["regular"][direction] = frames
+        self.turn = 0
         self.main_scene = Scene(self)
         self.current_scene = self.main_scene
-        self.turn = 0
 
     def game_loop(self):
         while self.running: 

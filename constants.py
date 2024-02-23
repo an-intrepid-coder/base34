@@ -1,9 +1,10 @@
 from os import path
 from pygame.locals import *
 
-VERSION = "0.0.0"
+VERSION = "0.0.1"
 
-COLOR_MOVEMENT_RANGE = (0, 200, 20, 160)
+COLOR_MOVEMENT_RANGE = (0, 240, 20, 90)
+COLOR_FOG = (70, 70, 70, 130)
 
 FPS = 60
 
@@ -18,6 +19,9 @@ FONT_PATH = path.abspath(path.join(path.dirname(__file__), "./sansation/Sansatio
 BOLD_FONT_PATH = path.abspath(path.join(path.dirname(__file__), "./sansation/Sansation-Bold.ttf"))
 WINDOW_ICON_PATH = path.abspath(path.join(path.dirname(__file__), "./window_icon.png"))
 DUDE_1_PATH = path.abspath(path.join(path.dirname(__file__), "./images/Dude1.png"))
+FOG_PATH = path.abspath(path.join(path.dirname(__file__), "./images/Fog.png"))
+PILLAR_1_PATH = path.abspath(path.join(path.dirname(__file__), "./images/Pillar1.png"))
+FLOOR_1_PATH = path.abspath(path.join(path.dirname(__file__), "./images/Floor1.png"))
 
 HUD_FONT_SIZE = 20
 TITLE_FONT_SIZE = 32 # TODO: title/loading screens

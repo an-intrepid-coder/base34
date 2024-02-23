@@ -60,14 +60,48 @@ class Scene:
         self.movers = []
 
     def actor_update_fov(self, actor):
-        potentials = self.tilemap.valid_tiles_in_range_of(actor.cell_xy(), actor.fov_radius)
+        x, y = actor.cell_xy() 
+        r = actor.fov_radius
+        potentials = self.tilemap.valid_tiles_in_range_of(actor.cell_xy(), r)
+        if actor.orientation in ["upleft", "downleft", "upright", "downright"]:
+            if actor.orientation == "upleft":
+                rect = (x - r, y - r, r + 2, r + 2)
+                rear = [(x + 1, y + 1), (x, y + 1), (x + 1, y)]
+            elif actor.orientation == "upright":
+                rect = (x - 1, y - r, r + 2, r + 2)
+                rear = [(x - 1, y), (x - 1, y + 1), (x, y + 1)]
+            elif actor.orientation == "downleft":
+                rect = (x - r, y - 1, r + 2, r + 2)
+                rear = [(x, y - 1), (x + 1, y - 1), (x, y + 1)]
+            elif actor.orientation == "downright":
+                rect = (x - 1, y - 1, r + 2, r + 2)
+                rear = [(x - 1, y - 1), (x, y - 1), (x - 1, y)]
+            potentials = list(filter(lambda t: t.xy_tuple[0] >= rect[0] and t.xy_tuple[1] >= rect[1] \
+                and t.xy_tuple[0] < rect[0] + rect[2] and t.xy_tuple[1] < rect[1] + rect[3] \
+                and t.xy_tuple not in rear, potentials))
+        elif actor.orientation in ["up", "down", "left", "right"]:
+            if actor.orientation == "up":
+                origin = (x, y - (r + 1))
+                rear = (x, y + 1)
+            elif actor.orientation == "down":
+                origin = (x, y + r + 1)
+                rear = (x, y - 1)
+            elif actor.orientation == "left":
+                origin = (x - (r + 1), y)
+                rear = (x + 1, y)
+            elif actor.orientation == "right":
+                origin = (x + r + 1, y)
+                rear = (x - 1, y)
+            in_cone = self.tilemap.valid_tiles_in_range_of(origin, r + 2, manhattan=True)
+            potentials = list(filter(lambda t: t in in_cone and t.xy_tuple != rear, potentials))
         visible = []
         for tile in potentials:
             line = self.tilemap.bresenham_line(actor.cell_xy(), tile.xy_tuple)
             unblocked = True
             for xy in line:
                 tile = self.tilemap.get_tile(xy)
-                visible.append(tile)
+                if tile not in visible:
+                    visible.append(tile)
                 if tile.blocks_vision():
                     unblocked = False
                     break
@@ -80,7 +114,9 @@ class Scene:
                 pos = (tile.xy_tuple[0] * CELL_SIZE, tile.xy_tuple[1] * CELL_SIZE)
                 self.tilemap.toggle_seen(tile.xy_tuple, True)
                 if actor.player:
-                    self.tilemap.map_surface.blit(tile.foggy_img, pos)
+                    img = tile.visible_img.copy()
+                    img.blit(self.game.foggy_cell_surf, (0, 0))
+                    self.tilemap.map_surface.blit(img, pos)
                     self.tilemap.mini_map_surface_master.blit(tile.visible_img, pos)
         if actor.player:
             self.tilemap.update_mini_map_surface()
@@ -134,14 +170,16 @@ class Scene:
                 visible_blits.append((tile.visible_img, pos))
                 dscore = self.distance_map_to_player[x][y]
                 valid_score = dscore * TU_MOVEMENT <= self.player.tu
-                if tile.walkable() and valid_score:
+                if tile.walkable() and valid_score and tile.xy_tuple != self.player.cell_xy():
                     move_range_blits.append((self.game.movement_range_cell_surf, pos))
-            for tile in list(filter(lambda x: x not in self.player.tiles_can_see, \
-                self.tilemap.valid_tiles_in_range_of(self.player.cell_xy(), \
-                (self.game.MAP_DISPLAY_SIZE[0] // 2) // CELL_SIZE))):
+            fog_width = (self.game.MAP_DISPLAY_SIZE[0] // 2) // CELL_SIZE
+            for tile in list(filter(lambda t: t not in self.player.tiles_can_see and t.seen, \
+                self.tilemap.valid_tiles_in_range_of(self.player.cell_xy(), fog_width))):
+                x, y = tile.xy_tuple
                 dscore = self.distance_map_to_player[x][y]
                 valid_score = dscore * TU_MOVEMENT <= self.player.tu
-                if tile.walkable() and valid_score:
+                if tile.walkable() and valid_score and tile.xy_tuple != self.player.cell_xy():
+                    pos = ((x - topleft[0]) * CELL_SIZE, (y - topleft[1]) * CELL_SIZE)
                     move_range_blits.append((self.game.movement_range_cell_surf, pos))
             self.on_screen_map_surface.blits(visible_blits)
             self.on_screen_map_surface.blits(move_range_blits)
@@ -184,12 +222,14 @@ class Scene:
                 line_surface = self.game.hud_font.render(msgs[line], True, "white")
                 console_surf.blit(line_surface, (0, line * line_height))
             self.screen.blit(console_surf, (0, self.screen.get_height() - CONSOLE_HEIGHT))
-        if self.redraw_map or self.redraw_side_hud:
+        if self.redraw_map or self.redraw_side_hud or self.redraw_console:
             pygame.display.flip()
         if self.redraw_map:
             self.redraw_map = False
         if self.redraw_side_hud:
             self.redraw_side_hud = False
+        if self.redraw_console:
+            self.redraw_console = False
 
     def push_to_console_if_player(self, msg, actors, tag=None):
         if any(filter(lambda x: x.player, actors)):
@@ -239,12 +279,22 @@ class Scene:
 
         def handle_left_click():
             x, y = pygame.mouse.get_pos()
+            tile_clicked_xy = tile_clicked((x, y))
+            if self.shift_pressed() and tile_clicked_xy is not None \
+                and chebyshev_distance(tile_clicked_xy, self.player.cell_xy()) == 1:
+                cost = 1
+                if self.player.tu >= cost:
+                    self.player.orientation = relative_direction(self.player.cell_xy(), tile_clicked_xy)
+                    self.player.tu -= cost
+                    self.actor_update_fov(self.player)
+                    self.redraw_switches()
+                    return
             for entity in self.side_hud_group: # clickables are offset 
                 if isinstance(entity, Clickable):
                     x2 = x - (self.screen.get_width() - SIDE_HUD_WIDTH)
                     if entity.clicked((x2, y)):
                         entity.effect((x2, y))
-            tile_clicked_xy = tile_clicked((x, y))
+                        return
             if tile_clicked_xy is not None:
                 tile = self.tilemap.get_tile(tile_clicked_xy)
                 tx, ty = tile_clicked_xy
@@ -310,7 +360,9 @@ class Scene:
                 mover.actor.update_frame()
                 mover.actor.cell_x, mover.actor.cell_y = to_xy
                 mover.path = mover.path[1:]
-                self.actor_update_fov(mover.actor) ###
+                self.tilemap.toggle_occupied(from_xy, False)
+                self.tilemap.toggle_occupied(to_xy, True)
+                self.actor_update_fov(mover.actor) 
                 self.redraw_switches()
                 if mover.actor.cell_xy() == mover.goal:
                     removed.append(mover)

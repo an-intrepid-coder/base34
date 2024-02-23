@@ -34,7 +34,7 @@ class Actor(Clickable):
         self.x, self.y = xy_tuple
         self.width, self.height = (CELL_SIZE, CELL_SIZE)
         self.rect = Rect(self.x, self.y, self.width, self.height)
-        self.fov_radius = 8 
+        self.fov_radius = 8
         self.tiles_can_see = []
         self.player = False
         super().__init__(img, width, height, effect)

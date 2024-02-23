@@ -25,8 +25,6 @@ class Tile:
         self.occupied = False 
         self.seen = False
         self.visible_img = None
-        self.foggy_img = None
-        self.unseen_img = None
 
     def walkable(self) -> bool:
         return self.tile_type == "floor"
@@ -100,6 +98,7 @@ class TileMap:
             if err2 <= dx:
                 err += dx
                 plot_y += sy
+        line.append((plot_x, plot_y))
         return line
 
     def scroll(self, dx_dy) -> bool:
@@ -114,12 +113,10 @@ class TileMap:
 
     def generate_map_surface(self):
         def placeholder_tile(tile_type):
-            surf = pygame.Surface((CELL_SIZE, CELL_SIZE), flags=SRCALPHA)
             if tile_type == "wall":
-                surf.fill((255, 255, 0))
+                return self.scene.game.pillar_1_sheet
             elif tile_type == "floor":
-                surf.fill((110, 110, 110))
-            return surf
+                return self.scene.game.floor_1_sheet
         w, h = self.wh_tuple
         surf = pygame.Surface((w * CELL_SIZE, h * CELL_SIZE))
         for x in range(w):
@@ -127,13 +124,9 @@ class TileMap:
                 pos = (x * CELL_SIZE, y * CELL_SIZE)
                 tile = self.get_tile((x, y))
                 visible_img = placeholder_tile(tile.tile_type)
-                foggy_img = visible_img.copy()
-                foggy_img.blit(self.scene.game.foggy_cell_surf, (0, 0))
                 unseen_img = self.scene.game.unseen_cell_surf
                 surf.blit(unseen_img, pos)
                 tile.visible_img = visible_img
-                tile.foggy_img = foggy_img
-                tile.unseen_img = unseen_img
         return surf
 
     def generate_tilemap_test_arena(self): 
@@ -194,7 +187,6 @@ class TileMap:
 
     def valid_tiles_in_range_of(self, xy_tuple, d, manhattan=False, walkable_only=False) -> list: 
         x1, y1 = xy_tuple
-        w, h = self.wh_tuple
         locs = []
         for x2 in range(x1 - d, x1 + d + 1):
             for y2 in range(y1 - d, y1 + d + 1):
