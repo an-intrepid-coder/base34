@@ -1,4 +1,5 @@
 import pygame
+from loading_screen import loading_screen
 from sheets import *
 from functional import *
 from euclidean import *
@@ -6,7 +7,8 @@ from constants import *
 from random import choice, randint, randrange, shuffle
 import heapq
 
-tile_types = ["floor", "wall"] 
+tile_types = ["floor", "wall", "outside", "tree"]
+door_colors = ["yellow", "cyan", "magenta", "red", "blue", "green"]
 
 def relative_direction(from_xy, to_xy, opposite=False):
     diff = (to_xy[0] - from_xy[0], to_xy[1] - from_xy[1])
@@ -25,12 +27,18 @@ class Tile:
         self.occupied = False 
         self.seen = False
         self.visible_img = None
+        self.building_number = None
+        self.door = False
+        self.door_open = False
+        self.door_color = None
+        self.outer_wall = False
+        self.contiguous = False
 
     def walkable(self) -> bool:
-        return self.tile_type == "floor"
+        return self.tile_type == "floor" or self.tile_type == "outside"
 
     def blocks_vision(self) -> bool:
-        return self.tile_type == "wall"
+        return self.tile_type == "wall" or self.tile_type == "tree" or (self.door and not self.occupied)
 
     def is_edge(self) -> bool:
         x, y = self.xy_tuple
@@ -47,11 +55,20 @@ class TileMap:
         self.wh_tuple = wh_tuple
         self.scene = scene
         self.tiles = []
-        self.generate_tilemap_test_arena() 
+        self.generate_tilemap_lightly_wooded() 
+        loading_screen(self.scene.game.loader, "...generating map surface...")
         self.map_surface = self.generate_map_surface() 
         self.mini_map_surface_master = self.map_surface.copy()
         self.mini_map_surface = pygame.transform.scale(self.mini_map_surface_master, MINI_MAP_SIZE)
         self.camera = (0, 0) 
+        loading_screen(self.scene.game.loader, "...map generated! ...")
+
+    def reset(self):
+        self.map_surface.fill("black")
+        self.mini_map_surface_master.fill("black")
+        self.reset_seen()
+        self.set_all_unoccupied()
+        self.update_mini_map_surface()
 
     def update_mini_map_surface(self):
         self.mini_map_surface = pygame.transform.scale(self.mini_map_surface_master, MINI_MAP_SIZE)
@@ -61,7 +78,7 @@ class TileMap:
         w, h = self.wh_tuple
         for x in range(w):
             for y in range(h):
-                self.tiles[x][y] = False
+                self.tiles[x][y].seen = False
 
     def make_all_seen(self):
         w, h = self.wh_tuple
@@ -112,42 +129,238 @@ class TileMap:
         return False
 
     def generate_map_surface(self):
-        def placeholder_tile(tile_type):
+        def placeholder_tile(tile_type, door_color): 
             if tile_type == "wall":
-                return self.scene.game.pillar_1_sheet
+                img = self.scene.game.pillar_1_sheet
+            elif tile_type == "outside":
+                def flippage() -> bool:
+                    return randint(0, 1) == 1
+                img = pygame.transform.flip(self.scene.game.outside_sheet, flip_x=flippage(), flip_y=flippage())
             elif tile_type == "floor":
-                return self.scene.game.floor_1_sheet
+                img = self.scene.game.floor_1_sheet.copy()
+            elif tile_type == "tree":
+                img = self.scene.game.tree_1_sheet
+            if door_color is not None:
+                pygame.draw.rect(img, door_color, (0, 0, CELL_SIZE, CELL_SIZE))
+                pygame.draw.rect(img, "black", (0, 0, CELL_SIZE, CELL_SIZE), 4)
+                vline_start, vline_end = (img.get_width() // 2 - 1, 0), (img.get_width() // 2 - 1, img.get_height() - 1)
+                hline_start, hline_end = (0, img.get_height() // 2 - 1), (img.get_width() - 1, img.get_height() // 2 - 1)
+                pygame.draw.line(img, "black", vline_start, vline_end, 2)
+                pygame.draw.line(img, "black", hline_start, hline_end, 2)
+            return img
+                
         w, h = self.wh_tuple
         surf = pygame.Surface((w * CELL_SIZE, h * CELL_SIZE))
         for x in range(w):
             for y in range(h):
                 pos = (x * CELL_SIZE, y * CELL_SIZE)
                 tile = self.get_tile((x, y))
-                visible_img = placeholder_tile(tile.tile_type)
+                visible_img = placeholder_tile(tile.tile_type, tile.door_color)
                 unseen_img = self.scene.game.unseen_cell_surf
-                surf.blit(unseen_img, pos)
                 tile.visible_img = visible_img
         return surf
 
-    def generate_tilemap_test_arena(self): 
+    def generate_tilemap_lightly_wooded(self): 
+        loading_screen(self.scene.game.loader, "...beginning map generation...")
         w, h = self.wh_tuple
         for x in range(w):
             self.tiles.append([])
             for y in range(h):
-                if self.coordinate_is_edge((x, y)):
-                    tile_type = "wall"
-                else:
-                    tile_type = "floor"
+                tile_type = "outside"
                 self.tiles[x].append(Tile(self, (x, y), tile_type))
-        # some random walls/pillars for testing, now
-        num_pillars = 400
-        pillars_placed = 0
-        while pillars_placed < num_pillars:
-            x, y = randrange(0, w), randrange(0, h)
-            if self.tiles[x][y] == "wall":
+        # place building floors
+        loading_screen(self.scene.game.loader, "...placing buildings...")
+        num_buildings = 40 
+        placed_buildings = 0
+        building_size_range = (4, 10) 
+        while placed_buildings < num_buildings:
+            bw = randint(building_size_range[0], building_size_range[1])
+            bh = randint(building_size_range[0], building_size_range[1])
+            origin = (randint(5, w - 5), randint(5, h - 40)) 
+            for x in range(origin[0] - bw, origin[0] + bw + 1):
+                for y in range(origin[1] - bh, origin[1] + bh + 1):
+                    if self.coordinate_in_bounds((x, y)):
+                        tile = self.tiles[x][y]
+                        tile.tile_type = "floor"
+                        tile.building_number = placed_buildings
+            placed_buildings += 1
+        # place outer walls
+        loading_screen(self.scene.game.loader, "...placing outer building walls...")
+        for x in range(w):
+            for y in range(h):
+                tile = self.tiles[x][y]
+                nbrs = self.neighbors_of((x, y))
+                if tile.tile_type == "floor" and (any(map(lambda t: t.tile_type == "outside", nbrs)) or tile.is_edge()):
+                    tile.tile_type = "wall"
+                    tile.outer_wall = True
+        for bldg in range(num_buildings):
+            spots = list(filter(lambda t: t.tile_type == "wall" and t.building_number == bldg and not t.is_edge(), \
+                self.all_tiles()))
+            if len(spots) == 0:
                 continue
-            self.tiles[x][y].tile_type = "wall"
-            pillars_placed += 1
+        # reconciliation of overlapping building numbers
+        loading_screen(self.scene.game.loader, "...tagging building zones...")
+        def reconcile_overlapping_buildings(bldg_number):
+            origins = list(filter(lambda t: t.building_number == bldg_number and t.walkable(), self.all_tiles()))
+            if len(origins) == 0:
+                return
+            origin = choice(origins)
+            seen_bools = [[False for _ in range(h)] for _ in range(w)]
+            seen_bools[origin.xy_tuple[0]][origin.xy_tuple[1]] = True
+            seen = []
+            start_node = [origin.xy_tuple]
+            heapq.heappush(seen, start_node)
+            while len(seen) > 0:
+                node = heapq.heappop(seen)[0]
+                nbrs = self.neighbors_of(node)
+                for nbr in nbrs:
+                    x, y = nbr.xy_tuple
+                    if not seen_bools[x][y] and (nbr.tile_type == "floor" or nbr.tile_type == "wall"):
+                        new_node = [(x, y)]
+                        seen_bools[x][y] = True
+                        heapq.heappush(seen, new_node)
+                        self.get_tile((x, y)).building_number = bldg_number
+        for bldg in range(num_buildings):
+            reconcile_overlapping_buildings(bldg)
+        # some happy little trees
+        loading_screen(self.scene.game.loader, "...placing happy little trees...")
+        num_trees = 600 
+        placed_trees = 0
+        while placed_trees < num_trees:
+            spot = choice(list(filter(lambda t: t.tile_type == "outside", self.all_tiles())))
+            spot.tile_type = "tree"
+            placed_trees += 1
+        # place inner walls  
+        loading_screen(self.scene.game.loader, "...placing inner building walls...")
+        for building in range(num_buildings):
+            outer_walls = list(filter(lambda t: t.building_number == building and t.outer_wall, self.all_tiles()))
+            if len(outer_walls) == 0:
+                continue
+            viables = []
+            for tile in outer_walls:
+                nbrs = self.neighbors_of(tile.xy_tuple)
+                num_outside = len(list(filter(lambda t: t.tile_type == "outside", nbrs)))
+                num_floors = len(list(filter(lambda t: t.tile_type == "floor", nbrs)))
+                if num_outside == num_floors == 3:
+                    viables.append(tile)
+            pairs = []  
+            for tile in viables:
+                for end in viables: 
+                    vert_end = tile.xy_tuple[0] == end.xy_tuple[0] and tile.xy_tuple[1] != end.xy_tuple[1]
+                    horiz_end = tile.xy_tuple[0] != end.xy_tuple[0] and tile.xy_tuple[1] == end.xy_tuple[1]
+                    if chebyshev_distance(tile.xy_tuple, end.xy_tuple) == 1:
+                        continue
+                    if vert_end or horiz_end:
+                        line = self.bresenham_line(tile.xy_tuple, end.xy_tuple)
+                        valid = True
+                        index = 0
+                        for xy in line:
+                            if not (xy == tile.xy_tuple or xy == end.xy_tuple) and self.get_tile(xy).tile_type == "wall":
+                                valid = False
+                                break
+                            index += 1
+                        if valid:
+                            pairs.append((tile, end))
+            shuffle(pairs)
+            inner_walls_to_place = randint(2, 10)
+            walls_placed = 0
+            while walls_placed < inner_walls_to_place and walls_placed < len(pairs):
+                for wall in range(inner_walls_to_place):
+                    if walls_placed >= len(pairs):
+                        break
+                    pair = pairs[walls_placed]
+                    line = self.bresenham_line(pair[0].xy_tuple, pair[1].xy_tuple)
+                    for xy in line:
+                        tile = self.get_tile(xy)
+                        tile.tile_type = "wall"
+                    walls_placed += 1  
+        loading_screen(self.scene.game.loader, "...beginning contiguity check...")
+        # final contiguity pass
+        def get_unreachable_tiles(first=False) -> list:
+            if first:
+                origin = choice(list(filter(lambda t: t.xy_tuple[1] == h - 1 and t.walkable(), self.all_tiles())))
+            else:
+                origin = choice(list(filter(lambda t: t.contiguous, self.all_tiles())))
+            seen_bools = [[False for _ in range(h)] for _ in range(w)]
+            seen_bools[origin.xy_tuple[0]][origin.xy_tuple[1]] = True
+            origin.contiguous = True
+            seen = []
+            start_node = [origin.xy_tuple]
+            heapq.heappush(seen, start_node)
+            while len(seen) > 0:
+                node = heapq.heappop(seen)[0]
+                nbrs = self.neighbors_of(node)
+                for nbr in nbrs:
+                    x, y = nbr.xy_tuple
+                    if not seen_bools[x][y] and nbr.walkable():
+                        new_node = [(x, y)]
+                        seen_bools[x][y] = True
+                        heapq.heappush(seen, new_node)
+                        self.get_tile((x, y)).contiguous = True
+            return list(filter(lambda t: t.walkable() and not t.contiguous, self.all_tiles()))
+        unreachable = get_unreachable_tiles(first=True)
+        def carve_path_to_contiguous(origin, deep_walls=False):
+            goal = choice(list(filter(lambda t: t.contiguous, self.all_tiles())))
+            line = self.bresenham_line(origin.xy_tuple, goal.xy_tuple)
+            for xy in line:
+                tile = self.get_tile(xy)
+                if tile.tile_type == "outside":
+                    break
+                elif tile.tile_type == "floor" and deep_walls:
+                    break
+                tile.tile_type = "floor"
+                tile.contiguous = True
+        check = []
+        fill_required = False
+        starting_unreachable = len(unreachable)
+        while len(unreachable) > 0:
+            percent_unreachable = 100 - min(int((len(unreachable) / starting_unreachable) * 100), 99)
+            loading_screen(self.scene.game.loader, "...reaching unreachable tiles ({}%)...".format(percent_unreachable))
+            origin = unreachable[randrange(len(unreachable))]
+            carve_path_to_contiguous(origin)
+            unreachable = get_unreachable_tiles()
+            check.append(len(unreachable))
+            if len(check) > 3 and check[-3] == check[-2] == check[-1]:
+                fill_required = True
+                break
+        if fill_required:
+            loading_screen(self.scene.game.loader, "...performing fill...")
+            for tile in unreachable:
+                tile.tile_type = "wall"
+        # A little pass to carve interesting passages
+        def deep_walls() -> list:
+            return list(filter(lambda t: all(map(lambda u: u.tile_type == "wall", self.neighbors_of(t.xy_tuple))) \
+                and not t.is_edge(), self.all_tiles()))
+        deep_wall_sections = deep_walls()
+        starting_deep_walls = len(deep_wall_sections)
+        loading_screen(self.scene.game.loader, "...carving deep walls out...")
+        while len(deep_wall_sections) > 0:
+            percent_carved = 100 - min(int((len(deep_wall_sections) / starting_deep_walls) * 100), 99)
+            loading_screen(self.scene.game.loader, "...carving ({}%)...".format(percent_carved))
+            origin = choice(deep_wall_sections)
+            carve_path_to_contiguous(origin, deep_walls=True)
+            deep_wall_sections = deep_walls()
+        # doors
+        loading_screen(self.scene.game.loader, "...assigning doors...")
+        num_yellow_buildings = 3
+        yellow_buildings_doored = 0
+        for bldg in range(num_buildings):
+            potentials = list(filter(lambda t: t.tile_type == "floor" and bldg == t.building_number, self.all_tiles()))
+            if len(potentials) == 0:
+                continue
+            doors = []
+            for tile in potentials:
+                nbrs = self.neighbors_of(tile.xy_tuple)
+                if any(map(lambda t: t.tile_type == "outside", nbrs)):
+                    doors.append(tile) 
+            if yellow_buildings_doored < num_yellow_buildings:
+                color = "yellow"
+                yellow_buildings_doored += 1
+            else:
+                color = choice(list(filter(lambda x: x != "yellow", door_colors)))
+            for tile in doors:
+                tile.door = True
+                tile.door_color = color
 
     def neighbors_of(self, tile_xy) -> list:
         neighbors = []
@@ -170,7 +383,7 @@ class TileMap:
         w, h = self.wh_tuple
         return x == 0 or y == 0 or x == w - 1 or y == h - 1
 
-    def set_all_unoccupied(self): # maybe
+    def set_all_unoccupied(self): 
         for x in range(self.wh_tuple[0]):
             for y in range(self.wh_tuple[1]):
                 self.tiles[x][y].occupied = False
@@ -181,7 +394,7 @@ class TileMap:
     def all_tiles(self) -> list:
         return flatten(self.tiles)
 
-    def toggle_occupied(self, xy_tuple, status): # maybe
+    def toggle_occupied(self, xy_tuple, status):
         if self.coordinate_in_bounds(xy_tuple):
             self.tiles[xy_tuple[0]][xy_tuple[1]].occupied = status
 
