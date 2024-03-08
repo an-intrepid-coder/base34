@@ -8,7 +8,6 @@ from random import choice, randint, randrange, shuffle
 import heapq
 
 tile_types = ["floor", "wall", "outside", "tree"]
-door_colors = ["yellow", "cyan", "magenta", "red", "blue", "green"]
 
 def relative_direction(from_xy, to_xy, opposite=False):
     diff = (to_xy[0] - from_xy[0], to_xy[1] - from_xy[1])
@@ -50,6 +49,9 @@ class Tile:
         w, h = self.tilemap.wh_tuple
         return x >= 0 and y >= 0 and x < h and y < w
 
+    def destructible(self) -> bool:
+        return self.tile_type == "wall" or self.tile_type == "tree"
+
 class TileMap:
     def __init__(self, scene, wh_tuple):
         self.wh_tuple = wh_tuple
@@ -62,6 +64,25 @@ class TileMap:
         self.mini_map_surface = pygame.transform.scale(self.mini_map_surface_master, MINI_MAP_SIZE)
         self.camera = (0, 0) 
         loading_screen(self.scene.game.loader, "...map generated! ...")
+
+    def destruct_tile(self, xy_tuple):
+        tile = self.get_tile(xy_tuple)
+        if tile.destructible():
+            if tile.tile_type == "wall":
+                img = self.scene.game.floor_1_sheet.copy()
+                tile.tile_type = "floor"
+            elif tile.tile_type == "tree":
+                def flippage() -> bool:
+                    return randint(0, 1) == 1
+                img = pygame.transform.flip(self.scene.game.outside_sheet, flip_x=flippage(), flip_y=flippage())
+                tile.tile_type = "outside"
+            tile.visible_img = img
+            if tile.seen:
+                fog_img = img.copy()
+                fog_img.blit(self.scene.game.foggy_cell_surf, (0, 0))
+                pos = (tile.xy_tuple[0] * CELL_SIZE, tile.xy_tuple[1] * CELL_SIZE) 
+                self.map_surface.blit(fog_img, pos)
+                self.mini_map_surface_master.blit(img, pos)
 
     def reset(self):
         self.map_surface.fill("black")
@@ -156,7 +177,6 @@ class TileMap:
                 pos = (x * CELL_SIZE, y * CELL_SIZE)
                 tile = self.get_tile((x, y))
                 visible_img = placeholder_tile(tile.tile_type, tile.door_color)
-                unseen_img = self.scene.game.unseen_cell_surf
                 tile.visible_img = visible_img
         return surf
 
@@ -173,9 +193,14 @@ class TileMap:
         num_buildings = 40 
         placed_buildings = 0
         building_size_range = (4, 10) 
+        first = True
         while placed_buildings < num_buildings:
             bw = randint(building_size_range[0], building_size_range[1])
             bh = randint(building_size_range[0], building_size_range[1])
+            if first:
+                bw *= 2
+                bh *= 2
+                first = False
             origin = (randint(5, w - 5), randint(5, h - 40)) 
             for x in range(origin[0] - bw, origin[0] + bw + 1):
                 for y in range(origin[1] - bh, origin[1] + bh + 1):
@@ -262,7 +287,9 @@ class TileMap:
                         if valid:
                             pairs.append((tile, end))
             shuffle(pairs)
-            inner_walls_to_place = randint(2, 10)
+            max_to_place = len(pairs) // 2
+            min_to_place = 4
+            inner_walls_to_place = randint(min_to_place, max_to_place)
             walls_placed = 0
             while walls_placed < inner_walls_to_place and walls_placed < len(pairs):
                 for wall in range(inner_walls_to_place):
@@ -274,6 +301,20 @@ class TileMap:
                         tile = self.get_tile(xy)
                         tile.tile_type = "wall"
                     walls_placed += 1  
+        # put a big tunnel maze in the biggest ones
+        loading_screen(self.scene.game.loader, "...spicing up biggest buildings ...")
+        tunnel_havens = randint(1, 3)
+        sizes = []
+        for building in range(num_buildings):
+            size = len(list(filter(lambda t: t.building_number == building, self.all_tiles())))
+            sizes.append((building, size))
+        def sort_key(x):
+            return x[1]
+        sizes.sort(key=sort_key)
+        for building in sizes[-tunnel_havens:]:  
+            number = building[0]
+            for tile in list(filter(lambda t: t.building_number == number, self.all_tiles())):
+                tile.tile_type = "wall"
         loading_screen(self.scene.game.loader, "...beginning contiguity check...")
         # final contiguity pass
         def get_unreachable_tiles(first=False) -> list:
@@ -336,14 +377,13 @@ class TileMap:
         loading_screen(self.scene.game.loader, "...carving deep walls out...")
         while len(deep_wall_sections) > 0:
             percent_carved = 100 - min(int((len(deep_wall_sections) / starting_deep_walls) * 100), 99)
-            loading_screen(self.scene.game.loader, "...carving ({}%)...".format(percent_carved))
+            loading_screen(self.scene.game.loader, "...carving tunnels ({}%)...".format(percent_carved))
             origin = choice(deep_wall_sections)
             carve_path_to_contiguous(origin, deep_walls=True)
             deep_wall_sections = deep_walls()
         # doors
         loading_screen(self.scene.game.loader, "...assigning doors...")
-        num_yellow_buildings = 3
-        yellow_buildings_doored = 0
+        color_index = 0
         for bldg in range(num_buildings):
             potentials = list(filter(lambda t: t.tile_type == "floor" and bldg == t.building_number, self.all_tiles()))
             if len(potentials) == 0:
@@ -353,11 +393,8 @@ class TileMap:
                 nbrs = self.neighbors_of(tile.xy_tuple)
                 if any(map(lambda t: t.tile_type == "outside", nbrs)):
                     doors.append(tile) 
-            if yellow_buildings_doored < num_yellow_buildings:
-                color = "yellow"
-                yellow_buildings_doored += 1
-            else:
-                color = choice(list(filter(lambda x: x != "yellow", door_colors)))
+            color = door_colors[color_index]
+            color_index = (color_index + 1) % len(door_colors)
             for tile in doors:
                 tile.door = True
                 tile.door_color = color
