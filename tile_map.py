@@ -64,6 +64,7 @@ class TileMap:
         self.mini_map_surface = pygame.transform.scale(self.mini_map_surface_master, MINI_MAP_SIZE)
         self.camera = (0, 0) 
         loading_screen(self.scene.game.loader, "...map generated! ...")
+        self.all_tiles = self.get_all_tiles()
 
     def destruct_tile(self, xy_tuple):
         tile = self.get_tile(xy_tuple)
@@ -188,6 +189,7 @@ class TileMap:
             for y in range(h):
                 tile_type = "outside"
                 self.tiles[x].append(Tile(self, (x, y), tile_type))
+        self.all_tiles = self.get_all_tiles()
         # place building floors
         loading_screen(self.scene.game.loader, "...placing buildings...")
         num_buildings = 40 
@@ -220,13 +222,13 @@ class TileMap:
                     tile.outer_wall = True
         for bldg in range(num_buildings):
             spots = list(filter(lambda t: t.tile_type == "wall" and t.building_number == bldg and not t.is_edge(), \
-                self.all_tiles()))
+                self.all_tiles))
             if len(spots) == 0:
                 continue
         # reconciliation of overlapping building numbers
         loading_screen(self.scene.game.loader, "...tagging building zones...")
         def reconcile_overlapping_buildings(bldg_number):
-            origins = list(filter(lambda t: t.building_number == bldg_number and t.walkable(), self.all_tiles()))
+            origins = list(filter(lambda t: t.building_number == bldg_number and t.walkable(), self.all_tiles))
             if len(origins) == 0:
                 return
             origin = choice(origins)
@@ -252,13 +254,13 @@ class TileMap:
         num_trees = 600 
         placed_trees = 0
         while placed_trees < num_trees:
-            spot = choice(list(filter(lambda t: t.tile_type == "outside", self.all_tiles())))
+            spot = choice(list(filter(lambda t: t.tile_type == "outside", self.all_tiles)))
             spot.tile_type = "tree"
             placed_trees += 1
         # place inner walls  
         loading_screen(self.scene.game.loader, "...placing inner building walls...")
         for building in range(num_buildings):
-            outer_walls = list(filter(lambda t: t.building_number == building and t.outer_wall, self.all_tiles()))
+            outer_walls = list(filter(lambda t: t.building_number == building and t.outer_wall, self.all_tiles))
             if len(outer_walls) == 0:
                 continue
             viables = []
@@ -289,7 +291,10 @@ class TileMap:
             shuffle(pairs)
             max_to_place = len(pairs) // 2
             min_to_place = 4
-            inner_walls_to_place = randint(min_to_place, max_to_place)
+            if max_to_place <= min_to_place:
+                inner_walls_to_place = max_to_place
+            else:
+                inner_walls_to_place = randint(min_to_place, max_to_place)
             walls_placed = 0
             while walls_placed < inner_walls_to_place and walls_placed < len(pairs):
                 for wall in range(inner_walls_to_place):
@@ -306,22 +311,22 @@ class TileMap:
         tunnel_havens = randint(1, 3)
         sizes = []
         for building in range(num_buildings):
-            size = len(list(filter(lambda t: t.building_number == building, self.all_tiles())))
+            size = len(list(filter(lambda t: t.building_number == building, self.all_tiles)))
             sizes.append((building, size))
         def sort_key(x):
             return x[1]
         sizes.sort(key=sort_key)
         for building in sizes[-tunnel_havens:]:  
             number = building[0]
-            for tile in list(filter(lambda t: t.building_number == number, self.all_tiles())):
+            for tile in list(filter(lambda t: t.building_number == number, self.all_tiles)):
                 tile.tile_type = "wall"
         loading_screen(self.scene.game.loader, "...beginning contiguity check...")
         # final contiguity pass
         def get_unreachable_tiles(first=False) -> list:
             if first:
-                origin = choice(list(filter(lambda t: t.xy_tuple[1] == h - 1 and t.walkable(), self.all_tiles())))
+                origin = choice(list(filter(lambda t: t.xy_tuple[1] == h - 1 and t.walkable(), self.all_tiles)))
             else:
-                origin = choice(list(filter(lambda t: t.contiguous, self.all_tiles())))
+                origin = choice(list(filter(lambda t: t.contiguous, self.all_tiles)))
             seen_bools = [[False for _ in range(h)] for _ in range(w)]
             seen_bools[origin.xy_tuple[0]][origin.xy_tuple[1]] = True
             origin.contiguous = True
@@ -338,10 +343,10 @@ class TileMap:
                         seen_bools[x][y] = True
                         heapq.heappush(seen, new_node)
                         self.get_tile((x, y)).contiguous = True
-            return list(filter(lambda t: t.walkable() and not t.contiguous, self.all_tiles()))
+            return list(filter(lambda t: t.walkable() and not t.contiguous, self.all_tiles))
         unreachable = get_unreachable_tiles(first=True)
         def carve_path_to_contiguous(origin, deep_walls=False):
-            goal = choice(list(filter(lambda t: t.contiguous, self.all_tiles())))
+            goal = choice(list(filter(lambda t: t.contiguous, self.all_tiles)))
             line = self.bresenham_line(origin.xy_tuple, goal.xy_tuple)
             for xy in line:
                 tile = self.get_tile(xy)
@@ -371,7 +376,7 @@ class TileMap:
         # A little pass to carve interesting passages
         def deep_walls() -> list:
             return list(filter(lambda t: all(map(lambda u: u.tile_type == "wall", self.neighbors_of(t.xy_tuple))) \
-                and not t.is_edge(), self.all_tiles()))
+                and not t.is_edge(), self.all_tiles))
         deep_wall_sections = deep_walls()
         starting_deep_walls = len(deep_wall_sections)
         loading_screen(self.scene.game.loader, "...carving deep walls out...")
@@ -385,7 +390,7 @@ class TileMap:
         loading_screen(self.scene.game.loader, "...assigning doors...")
         color_index = 0
         for bldg in range(num_buildings):
-            potentials = list(filter(lambda t: t.tile_type == "floor" and bldg == t.building_number, self.all_tiles()))
+            potentials = list(filter(lambda t: t.tile_type == "floor" and bldg == t.building_number, self.all_tiles))
             if len(potentials) == 0:
                 continue
             doors = []
@@ -428,7 +433,7 @@ class TileMap:
     def get_tile(self, xy_tuple) -> Tile:
         return self.tiles[xy_tuple[0]][xy_tuple[1]]
 
-    def all_tiles(self) -> list:
+    def get_all_tiles(self) -> list:
         return flatten(self.tiles)
 
     def toggle_occupied(self, xy_tuple, status):

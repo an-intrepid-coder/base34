@@ -2,7 +2,7 @@ from os import path
 from pygame.locals import *
 from random import shuffle
 
-VERSION = "0.0.3"
+VERSION = "0.0.4"
 
 LOADER_SIZE = (1280, 800)
 
@@ -113,6 +113,6 @@ INVENTORY_Y = ALERT_Y + HUD_FONT_SIZE + 4
 WEAPON_Y = INVENTORY_Y + HUD_FONT_SIZE + 4
 ARMOR_Y = WEAPON_Y + HUD_FONT_SIZE + 4
 HEADGEAR_Y = ARMOR_Y + HUD_FONT_SIZE + 4
-KEYS_Y = HEADGEAR_Y + HUD_FONT_SIZE + 4
-
+OVERWATCH_Y = HEADGEAR_Y + HUD_FONT_SIZE + 4
+KEYS_Y = OVERWATCH_Y + HUD_FONT_SIZE + 4
 

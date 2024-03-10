@@ -13,13 +13,18 @@ import heapq
 class Scene:
     def __init__(self, game):
         self.game = game
-        self.debug = game.debug
+        self.debug_hangers = self.game.debug_hangers
+        self.give_player_all_tracking_info = self.game.give_player_all_tracking_info
+        self.show_all_actors = self.game.show_all_actors
+        self.show_fps = self.game.show_fps
+        self.reveal_map_at_start = self.game.reveal_map_at_start
         self.debug_fov_triggered = False
+        self.move_all_actors_quickly = self.game.move_all_actors_quickly
         self.screen = game.screen
         self.screen_wh_cells_tuple = game.screen_wh_cells_tuple
         self.tilemap = None
         self.console = Console(CONSOLE_HEIGHT // HUD_FONT_SIZE)
-        if self.debug:
+        if self.move_all_actors_quickly:
             pygame.time.set_timer(self.game.VISIBLE_MOVER_CHECK, MOVER_TICK_MS_INVISIBLE)
         else:
             pygame.time.set_timer(self.game.VISIBLE_MOVER_CHECK, MOVER_TICK_MS_VISIBLE)
@@ -180,6 +185,7 @@ class Scene:
         self.times_shot_at = 0
         # NOTE: ^-- These only apply to current run after reset
         self.times_restarted = 0
+        self.baddie_uparmed_this_turn = False
         self.generate_scenario()
 
     def stats_lines(self):
@@ -348,15 +354,45 @@ class Scene:
         self.generate_scenario()
         self.redraw_switches()
 
+    def spoiler_blurb(self, baddie) -> str:
+        loot_to_spoil = list(filter(lambda l: not l.looted and not isinstance(l, Ammo) \
+            and l.name != "patrol intel terminal" \
+            and self.tilemap.get_tile(l.cell_xy()) not in self.player.tiles_can_see, self.loot_group))
+        spoiler = choice(loot_to_spoil)
+        d = manhattan_distance(spoiler.cell_xy(), baddie.cell_xy())
+        tile = self.tilemap.get_tile(spoiler.cell_xy())
+        x1, y1 = baddie.cell_xy()
+        x2, y2 = tile.xy_tuple
+        msg = "'I heard there's a {} {} tiles ".format(spoiler.name, d)
+        anding = False
+        if  x2 < x1:
+            msg += "to the west "
+            anding = True
+        elif x2 > x1:
+            msg += "to the east "
+            anding = True
+        if anding:
+            msg += "and "
+        if y2 < y1:
+            msg += "to the north "
+        elif y2 > y1:
+            msg += "to the south "
+        msg += "from here..."
+        if tile.building_number is not None:
+            door_color = first(lambda t: t.door and t.building_number == tile.building_number, \
+                self.tilemap.all_tiles).door_color
+            msg += " in a building with {} doors.".format(door_color)
+        return msg
+
     def generate_scenario(self):
         loading_screen(self.game.loader, "...memoizing bounding rects...")
-        for tile in self.tilemap.all_tiles():
+        for tile in self.tilemap.all_tiles:
             if tile.building_number is not None and tile.building_number not in self.building_numbers:
                 self.building_numbers.append(tile.building_number)
-        if self.debug:
+        if self.give_player_all_tracking_info:
             self.player.building_patrol_intels = self.building_numbers
         for building in self.building_numbers: 
-            building_tiles = list(filter(lambda t: t.building_number == building, self.tilemap.all_tiles()))
+            building_tiles = list(filter(lambda t: t.building_number == building, self.tilemap.all_tiles))
             min_y, max_y, min_x, max_x = 999, -100, 999, -100
             for tile in building_tiles:
                 x, y = tile.xy_tuple
@@ -376,7 +412,7 @@ class Scene:
         for building in self.building_numbers: 
             possible_tiles = list(filter(lambda x: x.walkable() and not x.occupied \
                 and manhattan_distance(self.player.cell_xy(), x.xy_tuple) > 20 and x.building_number == building \
-                and not x.door, self.tilemap.all_tiles()))
+                and not x.door, self.tilemap.all_tiles))
             num_baddies = randint(2, 3) + len(possible_tiles) // 100
             for _ in range(num_baddies):
                 if randint(0, 1) == 1:
@@ -388,33 +424,42 @@ class Scene:
         shuffle(baddies)
         self.actors_group.add(baddies) 
         loading_screen(self.game.loader, "...placing loot...")
-        num_armors = 6
-        num_revolvers = 6
-        num_pistols = 3
-        num_rifles = 1
+        num_armors = 4
+        num_revolvers = 8
+        num_pistols = 4
+        num_rifles = 3
         num_knives = 1 
-        num_ammos = 15
-        num_grenades = 6
-        num_stims = 4
+        num_ammos = 20
+        num_grenades = 5
+        num_stims = 6
+        starting_weapon = choice(["knife", "revolver", "frag grenade"])
         loots = [  
             self.make_360_goggles(self.nook_tile().xy_tuple),
-            self.make_tracker_goggles(self.nook_tile().xy_tuple),
             self.make_sensor_disc(self.nook_tile().xy_tuple, 1),
+            self.make_body_armor(self.outside_tile().xy_tuple),
         ]
+        if randint(0, 1) == 1:
+            self.make_tracker_goggles(self.nook_tile().xy_tuple),
+        else:
+            self.make_tracker_goggles(self.outside_tile().xy_tuple),
+        if starting_weapon != "knife":
+            loots.append(self.make_knife(self.nook_tile().xy_tuple))
         for _ in range(num_armors):
             loots.append(self.make_body_armor(self.nook_tile().xy_tuple))
-        for _ in range(num_revolvers):
-            loots.append(self.make_revolver(self.nook_tile().xy_tuple))
+        if starting_weapon != "revolver":
+            for _ in range(num_revolvers):
+                loots.append(self.make_revolver(self.nook_tile().xy_tuple))
         for _ in range(num_pistols):
             loots.append(self.make_pistol(self.nook_tile().xy_tuple))
         for _ in range(num_rifles):
             loots.append(self.make_rifle(self.nook_tile().xy_tuple))
-        for _ in range(num_knives):
-            loots.append(self.make_knife(self.nook_tile().xy_tuple))
         for _ in range(num_ammos):
-            loots.append(self.make_revolver_ammo(randint(1, 4), self.nook_tile().xy_tuple))
-            loots.append(self.make_pistol_ammo(randint(1, 4), self.nook_tile().xy_tuple))
-            loots.append(self.make_rifle_ammo(randint(1, 4), self.nook_tile().xy_tuple))
+            loots.append(self.make_revolver_ammo(randint(1, 2), self.nook_tile().xy_tuple))
+            loots.append(self.make_revolver_ammo(randint(1, 2), self.outside_tile().xy_tuple))
+            loots.append(self.make_pistol_ammo(randint(1, 2), self.nook_tile().xy_tuple))
+            loots.append(self.make_pistol_ammo(randint(1, 2), self.outside_tile().xy_tuple))
+            loots.append(self.make_rifle_ammo(randint(1, 2), self.nook_tile().xy_tuple))
+            loots.append(self.make_rifle_ammo(randint(1, 2), self.outside_tile().xy_tuple))
         for _ in range(num_grenades):
             loots.append(self.make_frag_grenade(self.nook_tile().xy_tuple, 1))
             loots.append(self.make_smoke_grenade(self.nook_tile().xy_tuple, randint(1, 2)))
@@ -424,6 +469,18 @@ class Scene:
         for building in self.building_numbers:
             terminal = self.make_patrol_intel_terminal(building)
             loots.append(terminal)
+        if starting_weapon == "knife":
+            self.push_to_console("You notice a knife and some stims nearby...")
+            loots.append(self.make_knife(self.tile_near_player().xy_tuple))
+            loots.append(self.make_speed_stim(self.tile_near_player().xy_tuple, 3))
+        elif starting_weapon == "revolver":
+            self.push_to_console("You notice a revolver and some ammo nearby...")
+            loots.append(self.make_revolver(self.tile_near_player().xy_tuple))
+            loots.append(self.make_revolver_ammo(6, self.tile_near_player().xy_tuple))
+        elif starting_weapon == "frag grenade":
+            self.push_to_console("You notice some grenades and body armor nearby...")
+            loots.append(self.make_frag_grenade(self.tile_near_player().xy_tuple, 3))
+            loots.append(self.make_body_armor(self.tile_near_player().xy_tuple))
         self.loot_group.add(loots) # more loot to come
         loading_screen(self.game.loader, "...issuing orders to baddies...")
         for baddie in self.all_baddies():
@@ -431,7 +488,7 @@ class Scene:
         self.update_all_baddie_awareness() 
         self.run_ai_behavior() 
         self.player.actions_available = self.actor_possible_actions(self.player)
-        if self.debug:
+        if self.reveal_map_at_start:
             self.update_player_fov()
 
     def uparm_baddie(self, baddie):
@@ -441,16 +498,18 @@ class Scene:
         baddie.inventory.append(rifle)
         baddie.equipped_weapon = rifle
         self.arm_baddie_with(baddie, "longarm")
-        if self.debug:
-            self.push_to_console("baddie uparmed with: {}".format(baddie.equipped_weapon.name))
+
+    def outside_tile(self) -> Tile:
+        return choice(list(filter(lambda t: t.tile_type == "outside" and t.walkable() and not t.occupied, \
+            self.tilemap.all_tiles)))
 
     def nook_tile(self) -> Tile: 
         nooks = list(filter(lambda t: t.walkable() and not t.door and t.tile_type == "floor" and not t.occupied \
             and len(list(filter(lambda u: u.tile_type == "floor", self.tilemap.neighbors_of(t.xy_tuple)))) == 1,
-            self.tilemap.all_tiles()))
+            self.tilemap.all_tiles))
         if len(nooks) == 0:
             return choice(list(filter(lambda t: t.tile_type == "floor" and not t.door and not t.occupied, \
-                self.tilemap.all_tiles())))
+                self.tilemap.all_tiles)))
         else:
             return choice(nooks)
 
@@ -484,7 +543,7 @@ class Scene:
                     self.reveal_tile(tile)
                 r = Rect(self.local_bounding_rects[building_number])
                 revealed = list(filter(lambda t: r.contains(Rect(t.xy_tuple[0], t.xy_tuple[1], 0, 0)), \
-                    self.tilemap.all_tiles()))
+                    self.tilemap.all_tiles))
                 edge_fuzz = []
                 edges = list(filter(lambda t: t.xy_tuple[0] == r.x or t.xy_tuple[1] == r.y \
                     or t.xy_tuple[0] == r.x + r.width - 1 or t.xy_tuple[1] == r.y + r.height - 1, revealed))
@@ -608,7 +667,7 @@ class Scene:
                     rear = [(x - 1, y), (x - 1, y + 1), (x, y + 1)]
                 elif actor.orientation == "downleft":
                     rect = (x - r, y - 1, r + 2, r + 2)
-                    rear = [(x, y - 1), (x + 1, y - 1), (x, y + 1)]
+                    rear = [(x, y - 1), (x + 1, y - 1), (x + 1, y)]
                 elif actor.orientation == "downright":
                     rect = (x - 1, y - 1, r + 2, r + 2)
                     rear = [(x - 1, y - 1), (x, y - 1), (x - 1, y)]
@@ -642,8 +701,8 @@ class Scene:
                 if (tile.blocks_vision() or smoked) and tile.xy_tuple != actor.cell_xy():
                     unblocked = False
                     break
-        if self.debug and not self.debug_fov_triggered and actor.player:
-            visible = self.tilemap.all_tiles()
+        if self.reveal_map_at_start and not self.debug_fov_triggered and actor.player:
+            visible = self.tilemap.all_tiles
             self.debug_fov_triggered = True
         actor.tiles_can_see = visible
         if actor.player or sensor_disc:
@@ -671,18 +730,14 @@ class Scene:
     def run_ai_behavior(self):
         Baddie.alert_sentinel = False
         for baddie in self.all_baddies():
+            baddie.blurbed_this_turn = False
             baddie.tu = baddie.max_tu
             baddie.finished_turn = False
             self.actor_ai_baddie(baddie)  
-        if self.debug:
-            self.push_to_console("<Rovers> Local: {} | Long: {} | Alert: {}".format(Baddie.num_local_rovers, \
-                Baddie.num_long_rovers, Baddie.num_alert_rovers))
-            self.push_to_console("Stationary: {}".format(len(list(filter(lambda b: not b.is_rover(), \
-                self.all_baddies())))))
 
     def actor_ai_path_to_random_floor_tile(self, actor) -> list:
         target = choice(list(filter(lambda t: t.tile_type == "floor" and not t.occupied \
-            and not t.door, self.tilemap.all_tiles())))
+            and not t.door, self.tilemap.all_tiles)))
         path = self.shortest_path(actor.cell_xy(), target.xy_tuple)
         return path 
 
@@ -691,21 +746,21 @@ class Scene:
             self.alert_zone_rect = self.new_alert_zone_rect(actor.cell_xy())
         r = Rect(self.alert_zone_rect)
         target = choice(list(filter(lambda t: t.walkable() and not t.occupied \
-            and not t.door and r.contains(Rect(t.xy_tuple[0], t.xy_tuple[1], 0, 0)), self.tilemap.all_tiles())))
+            and not t.door and r.contains(Rect(t.xy_tuple[0], t.xy_tuple[1], 0, 0)), self.tilemap.all_tiles)))
         path = self.shortest_path(actor.cell_xy(), target.xy_tuple, bounding_rect=self.alert_zone_rect)
         return path 
 
     def actor_ai_return_home(self, actor):
         target = choice(list(filter(lambda t: t.walkable() and not t.occupied and not t.door\
             and t.building_number == actor.building_number \
-            and chebyshev_distance(t.xy_tuple, actor.cell_xy()) > 2, self.tilemap.all_tiles())))
+            and chebyshev_distance(t.xy_tuple, actor.cell_xy()) > 2, self.tilemap.all_tiles)))
         path = self.shortest_path(actor.cell_xy(), target.xy_tuple)
         return path
 
     def actor_ai_path_to_local_floor_tile(self, actor) -> list:
         target = choice(list(filter(lambda t: t.walkable() and not t.occupied and not t.door\
             and t.building_number == actor.building_number \
-            and chebyshev_distance(t.xy_tuple, actor.cell_xy()) > 2, self.tilemap.all_tiles())))
+            and chebyshev_distance(t.xy_tuple, actor.cell_xy()) > 2, self.tilemap.all_tiles)))
         x, y = actor.cell_xy()
         bounding_rect = self.local_bounding_rects[actor.building_number]
         path = self.shortest_path((x, y), target.xy_tuple, bounding_rect=bounding_rect)
@@ -740,9 +795,10 @@ class Scene:
             if tile in actor.tiles_can_see:
                 actions.append(["interact", loot])
         if actor.equipped_weapon is not None:
+            has_knife = actor.equipped_weapon is not None and actor.equipped_weapon.name == "knife"
             for opponent in opponents_in_lethal_range:
                 tile = self.tilemap.get_tile(opponent.cell_xy())
-                if tile in actor.tiles_can_see and actor.tu >= TU_LETHAL and opponent.can_be_killed():
+                if tile in actor.tiles_can_see and (actor.tu >= TU_LETHAL or has_knife) and opponent.can_be_killed():
                     if actor.equipped_weapon.name == "knife":
                         actions.append(["lethal", opponent]) 
                     elif actor.equipped_weapon.ammo > 0:
@@ -773,10 +829,12 @@ class Scene:
             actor.tu -= TU_MELEE
         else:
             self.push_to_console("You fight off an attempt to knock you out!")
+        if isinstance(target, Player) and self.player.knocked_out:
+            self.handle_blurb(actor.got_em_blurb(), actor)
 
     def actor_take_lethal_action(self, actor, action, silenced=False):
         target = action[1] 
-        coup_de_grace = target.knocked_out and chebyshev_distance(target.cell_xy(), actor.cell_xy()) == 1
+        coup_de_grace = target.knocked_out and chebyshev_distance(target.cell_xy(), actor.cell_xy()) <= 1
         if isinstance(actor, Baddie) and isinstance(target, Player):
             self.times_shot_at += 1
             miss = randint(0, 1) == 1
@@ -797,15 +855,21 @@ class Scene:
                 msg = "{} kills {} with {}!".format(actor.name, target.name, wep_msg)
                 self.push_to_console_if_player(msg, [actor, target])
             elif target.equipped_armor is not None:
-                target.inventory.remove(target.equipped_armor)
-                target.equipped_armor = None
-                msg = "{} shoots {} with {} -- but the armor takes the hit (and is now useless)!".format(actor.name, \
-                    target.name, actor.equipped_weapon.name)
+                msg = "{} shoots {} with {} -- but the armor takes the hit! ".format(actor.name, target.name, \
+                    actor.equipped_weapon.name)
+                if randint(0, 1) == 1:
+                    target.inventory.remove(target.equipped_armor)
+                    target.equipped_armor = None
+                    msg += " (and is destroyed)"
+                else:
+                    msg += " (and is still good)"
                 self.push_to_console_if_player(msg, [actor, target])
         else:
             self.push_to_console("*whizzing bullets* You're being shot at!")
         self.redraw_switches()
-        actor.tu -= TU_LETHAL
+        has_knife = actor.equipped_weapon is not None and actor.equipped_weapon.name == "knife"
+        if not has_knife:
+            actor.tu -= TU_LETHAL
         if not coup_de_grace:
             actor.equipped_weapon.ammo -= 1
         else:    
@@ -815,9 +879,11 @@ class Scene:
             self.baddies_killed += 1
             if not silenced:
                 self.begin_alert("you used a loud weapon", player_override=True, code_red=True)
+        if isinstance(target, Player) and self.player.dead:
+            self.handle_blurb(actor.got_em_blurb(), actor)
 
     def add_baddie_to_movers(self, baddie): 
-        if baddie.cell_xy() in self.player.tiles_can_see or self.debug:
+        if baddie.cell_xy() in self.player.tiles_can_see or self.show_all_actors:
             exists = first(lambda m: m.actor is baddie, self.visible_movers)
             if exists is None:
                 self.visible_movers.append(Mover(baddie, [xy for xy in baddie.patrol_path]))
@@ -867,8 +933,6 @@ class Scene:
                 r = Rect(self.local_bounding_rects[baddie.building_number])
                 if not r.contains(Rect(baddie.cell_x, baddie.cell_y, 0, 0)):
                     baddie.patrol_path = self.actor_ai_return_home(baddie)
-                    if self.debug:
-                        self.push_to_console("Baddie returning home.")
                 else:
                     baddie.patrol_path = self.actor_ai_path_to_local_floor_tile(baddie)
             elif baddie.alert_rover:
@@ -899,9 +963,6 @@ class Scene:
             if not Baddie.alert_sentinel:
                 spotter_alert_call()
                 baddie.spotter = False  
-            if self.debug:
-                self.push_to_console("spotter TU remaining: {} | spotter finished turn: {}".format(\
-                    baddie.tu, baddie.finished_turn))
         nearby_unresponsive = first(lambda b: chebyshev_distance(b.cell_xy(), baddie.cell_xy()) <= 1 \
             and not b.dead, self.unresponsive_baddies())
         def stationary_with_nothing_to_do(actions) -> bool: 
@@ -923,8 +984,6 @@ class Scene:
             and self.alert_timer is None
         if finished_investigating: 
             baddie.investigating = False
-            if self.debug:
-                self.push_to_console("baddie finished investigating")
     
     def unresponsive_baddies(self) -> list:
         return list(filter(lambda b: isinstance(b, Baddie), self.unresponsive_group))
@@ -941,7 +1000,6 @@ class Scene:
         self.move_select_to_confirm = False
         self.move_path = None
         self.player_turn = False 
-        self.player.tu = self.player.max_tu
         self.redraw_switches()
         self.draw()                           
         self.run_ai_behavior()
@@ -950,7 +1008,7 @@ class Scene:
 
     def make_macguffin(self) -> Terminal: 
         pos = choice(list(filter(lambda t: t.tile_type == "floor" and not t.occupied and not t.door, \
-            self.tilemap.all_tiles()))).xy_tuple
+            self.tilemap.all_tiles))).xy_tuple
         macguffin = Terminal(self.game.entity_sheets[self.game.terminal_sheet], CELL_SIZE, CELL_SIZE, cell_xy_tuple=pos)
         macguffin.name = "macguffin"
         nbrs = self.tilemap.neighbors_of(pos)
@@ -963,7 +1021,7 @@ class Scene:
 
     def make_patrol_intel_terminal(self, building_number) -> Terminal:
         pos = choice(list(filter(lambda t: t.tile_type == "floor" and not t.occupied and not t.door \
-            and t.building_number == building_number, self.tilemap.all_tiles()))).xy_tuple
+            and t.building_number == building_number, self.tilemap.all_tiles))).xy_tuple
         terminal = Terminal(self.game.entity_sheets[self.game.terminal_sheet], CELL_SIZE, CELL_SIZE, cell_xy_tuple=pos)
         terminal.name = "patrol intel terminal"
         terminal.building_number = building_number
@@ -976,13 +1034,13 @@ class Scene:
         return terminal
 
     def tile_near_player(self) -> Tile:
-        return choice(list(filter(lambda t: chebyshev_distance(t.xy_tuple, self.player.cell_xy()) <= 10 \
-            and t.walkable() and not t.occupied, self.tilemap.all_tiles())))
+        return choice(list(filter(lambda t: chebyshev_distance(t.xy_tuple, self.player.cell_xy()) <= 2 \
+            and t.walkable() and not t.occupied, self.tilemap.all_tiles)))
 
     def baddie_loot_tile(self, baddie) -> Tile:
         potentials = list(filter(lambda t: chebyshev_distance(t.xy_tuple, baddie.cell_xy()) <= 10 \
             and t.walkable() and not t.occupied and t.xy_tuple != baddie.cell_xy() and not t.door, \
-            self.tilemap.all_tiles()))
+            self.tilemap.all_tiles))
         closest = potentials[0]
         for tile in potentials:
             if chebyshev_distance(tile.xy_tuple, self.player.cell_xy()) < chebyshev_distance(closest.xy_tuple, \
@@ -1101,7 +1159,7 @@ class Scene:
 
     def make_player(self) -> Actor: 
         pos = choice(list(filter(lambda t: t.xy_tuple[1] == self.tilemap.wh_tuple[1] - 1 and t.walkable(), \
-            self.tilemap.all_tiles()))).xy_tuple
+            self.tilemap.all_tiles))).xy_tuple
         player = Player(self.game.entity_sheets[self.game.dude_1_sheet], CELL_SIZE, CELL_SIZE, cell_xy_tuple=pos)
         self.tilemap.toggle_occupied(pos, True)
         player.change_orientation("up")
@@ -1112,12 +1170,12 @@ class Scene:
             if random_starter:
                 pos = choice(list(filter(lambda x: x.walkable() and not x.occupied \
                     and manhattan_distance(self.player.cell_xy(), x.xy_tuple) > 12, \
-                    self.tilemap.all_tiles()))).xy_tuple
+                    self.tilemap.all_tiles))).xy_tuple
             else:
                 pos = choice(list(filter(lambda x: x.walkable() and not x.occupied \
                     and manhattan_distance(self.player.cell_xy(), x.xy_tuple) > 20 \
                     and x.building_number == building_number \
-                    and not x.door, self.tilemap.all_tiles()))).xy_tuple
+                    and not x.door, self.tilemap.all_tiles))).xy_tuple
         baddie = Baddie(self.game.entity_sheets[self.game.dude_2_sheet], CELL_SIZE, CELL_SIZE, cell_xy_tuple=pos)
         self.tilemap.toggle_occupied(pos, True)
         baddie.building_number = building_number
@@ -1268,10 +1326,6 @@ class Scene:
                         last = relative_direction(mover.actor.cell_xy(), xy)
                     else:
                         last = relative_direction(mover.path[index - 1], xy)
-                    if last == "wait" and self.debug:
-                        self.push_to_console("Error in patrol paths: last == 'wait'")
-                        print("last == 'wait' <this should never happen>")
-                        mover.actor.print_debug_info() 
                     index += 1
                     if last != "wait":
                         img = self.game.entity_sheets[self.game.patrol_path_surf]["regular"][last][0]
@@ -1388,8 +1442,15 @@ class Scene:
             else:
                 head_msg = "{} Equipped".format(headgear.name)
             draw_dynamic_hud_surf(head_msg, HEADGEAR_Y, fg="white", bg="black")
+            if not self.player.melee_overwatch and not self.player.lethal_overwatch:
+                ow_msg = "No Overwatch"
+            elif self.player.melee_overwatch and not self.player.lethal_overwatch:
+                ow_msg = "Non-Lethal Overwatch"
+            elif self.player.lethal_overwatch and not self.player.melee_overwatch:
+                ow_msg = "Lethal Overwatch"
+            draw_dynamic_hud_surf(ow_msg, OVERWATCH_Y, fg="white", bg="black")
             draw_acquired_keys()
-            if self.debug:
+            if self.show_fps:
                 draw_dynamic_hud_surf("FPS: {}".format(int(self.game.clock.get_fps())), self.screen.get_height() - 50)
             self.screen.blit(self.side_hud, (x, 0))
         if self.redraw_console:
@@ -1472,6 +1533,27 @@ class Scene:
                 and self.tilemap.get_tile(baddie.cell_xy()) in self.player.tiles_can_see:
                 self.enemy_los_tiles.append(tile)
 
+    def handle_blurb(self, blurb, speaker):
+        xy = speaker.cell_xy()
+        if self.tilemap.get_tile(xy) in self.player.tiles_can_see and not speaker.blurbed_this_turn:
+            self.tilemap.camera = xy
+            self.update_on_screen_actors()
+            self.redraw_map = True
+            self.draw()
+            topleft = self.get_topleft_cell()
+            txt = self.game.hud_font.render(blurb, True, "white", "black")
+            pos = ((((xy[0] - topleft[0]) * CELL_SIZE) + CELL_SIZE // 2) - txt.get_width() // 2, \
+                ((xy[1] - topleft[1]) * CELL_SIZE) - txt.get_height())
+            self.screen.blit(txt, pos)
+            pygame.display.flip()
+            pygame.time.wait(1000) 
+            self.tilemap.camera = self.player.cell_xy()
+            self.update_on_screen_actors()
+            self.redraw_map = True
+            self.draw()
+            speaker.blurbed_this_turn = True
+        self.animation_lock = False
+
     def handle_attack(self, attacker, action): 
         xy = attacker.cell_xy()
         if self.tilemap.get_tile(xy) in self.player.tiles_can_see:
@@ -1517,6 +1599,7 @@ class Scene:
                 if isinstance(actor, Baddie):
                     actor.kill()
                     self.kill_baddie(actor)
+                    self.baddies_killed += 1
                 elif isinstance(actor, Player):
                     self.player.dead = True
                     self.push_to_console("...frag grenades have a minimum safe distance...")
@@ -1582,6 +1665,7 @@ class Scene:
             if any(screen_scrolled):
                 self.redraw_switches(rconsole=False)
             console_changed = False
+            sidehud_changed = False
             if pygame.key.get_pressed()[K_LEFTBRACKET]:
                 self.console.scroll("up")
                 console_changed = True
@@ -1599,8 +1683,22 @@ class Scene:
             elif pygame.key.get_pressed()[K_SLASH] and self.shift_pressed():
                 self.console.push_controls()
                 console_changed = True
+            elif pygame.key.get_pressed()[K_f] and self.shift_pressed():
+                self.player.lethal_overwatch = False
+                self.player.melee_overwatch = True
+                sidehud_changed = True
+            elif pygame.key.get_pressed()[K_f] and self.ctrl_pressed():
+                self.player.lethal_overwatch = True
+                self.player.melee_overwatch = False
+                sidehud_changed = True
+            elif pygame.key.get_pressed()[K_f]:
+                self.player.lethal_overwatch = False
+                self.player.melee_overwatch = False
+                sidehud_changed = True
             if console_changed:
                 self.redraw_console = True
+            if sidehud_changed:
+                self.redraw_side_hud = True
 
         def tile_clicked(xy_tuple) -> tuple: # or None
             x, y = xy_tuple
@@ -1709,7 +1807,8 @@ class Scene:
                         self.push_to_console("{} already KO'd!".format(melee_action_clickable[1].name))
                     self.redraw_switches()
                 elif lethal_action_clickable is not None and self.ctrl_pressed():
-                    has_tu = self.player.tu >= TU_LETHAL
+                    has_knife = self.player.equipped_weapon is not None and self.player.equipped_weapon.name == "knife"
+                    has_tu = self.player.tu >= TU_LETHAL or has_knife
                     valid_target = lethal_action_clickable[1].can_be_killed()
                     if has_tu and valid_target: 
                         if self.player.equipped_weapon is None:
@@ -1853,16 +1952,12 @@ class Scene:
                         m.actor.finished_turn = True
                         if m in movers:
                             movers.remove(m)
-                        if self.debug:
-                            self.push_to_console("baddie surrounded")
                         return True
                     elif occupied: 
                         if m in movers:
                             movers.remove(m)
                         m.actor.patrol_path = None
                         self.actor_ai_baddie(m.actor)
-                        if self.debug:
-                            self.push_to_console("baddie re-routed")
                         return True
                     return False
             def move_cost(orientation) -> int:
@@ -1872,9 +1967,34 @@ class Scene:
                     return 0
                 else:
                     return TU_MOVEMENT
+            def baddie_triggers_overwatch() -> bool:
+                if not self.player.lethal_overwatch and not self.player.melee_overwatch:
+                    return False
+                elif self.player.lethal_overwatch and self.player.equipped_weapon is not None:
+                    if self.player.equipped_weapon.name == "knife":
+                        can_react = chebyshev_distance(mover.actor.cell_xy(), self.player.cell_xy()) == 1 \
+                            and self.player.tu >= TU_LETHAL
+                    else:
+                        can_react = self.player.tu >= TU_LETHAL and self.player.equipped_weapon.ammo > 0
+                elif self.player.melee_overwatch:
+                    can_react = chebyshev_distance(mover.actor.cell_xy(), self.player.cell_xy()) == 1 \
+                        and self.player.tu >= TU_MELEE
+                visible = self.tilemap.get_tile(mover.actor.cell_xy()) in self.player.tiles_can_see
+                dangerous = self.tilemap.get_tile(self.player.cell_xy()) in mover.actor.tiles_can_see
+                return visible and can_react and dangerous
             def baddie_hook(m):
                 if isinstance(m.actor, Baddie):
                     if m.actor.tu < TU_CHEAPEST:
+                        m.actor.finished_turn = True
+                    elif baddie_triggers_overwatch(): 
+                        self.player.actions_available = self.actor_possible_actions(self.player)
+                        if self.player.melee_overwatch:
+                            action = first(lambda a: a[0] == "melee" and a[1] is m.actor, self.player.actions_available)
+                            self.actor_take_melee_action(self.player, action)
+                        elif self.player.lethal_overwatch:
+                            action = first(lambda a: a[0] == "lethal" and a[1] is m.actor, self.player.actions_available)
+                            self.actor_take_lethal_action(self.player, action)
+                        self.handle_attack(self.player, action)  
                         m.actor.finished_turn = True
                     else:
                         self.actor_ai_baddie(m.actor) 
@@ -1936,14 +2056,39 @@ class Scene:
                 self.update_on_screen_actors()
 
         def player_turn_ready() -> bool:
+            if self.debug_hangers:
+                hangers = list(filter(lambda b: not b.finished_turn, self.all_baddies()))
+                print("# hangers: {}".format(len(hangers)))
             for baddie in self.all_baddies():
                 if not baddie.finished_turn:
+                    if self.debug_hangers:
+                        if len(hangers) == 1: 
+                            hangers[0].print_debug_info() 
                     return False
+            self.player.tu = self.player.max_tu
             self.player.actions_available = self.actor_possible_actions(self.player)
             self.distance_map_to_player = self.dmap_to_player(bounded=True)
             self.alert_update()
             self.smoke_check() 
             self.game_over_check()
+            for actor in self.on_screen_actors_group:
+                in_sight = self.tilemap.get_tile(actor.cell_xy()) in self.player.tiles_can_see
+                if isinstance(actor, Baddie) and not actor.can_see_player and in_sight:
+                    will_blurb = randint(1, 3) == 1
+                    if will_blurb:
+                        will_spoil = randint(1, 4) == 1
+                        if will_spoil:
+                            blurb = self.spoiler_blurb(actor)
+                            index = len(blurb) // 2
+                            while blurb[index] != ' ':
+                                index -= 1
+                            self.push_to_console("You overhear: '{}".format(blurb[:index]))
+                            self.push_to_console(" {}'".format(blurb[index:])) 
+                        else:
+                            blurb = actor.random_blurb()
+                        self.animation_lock = True
+                        self.handle_blurb(blurb, actor)
+            self.baddie_uparmed_this_turn = False
             self.redraw_switches()
             return True
 
@@ -1978,7 +2123,7 @@ class Scene:
 
     def on_screen_tiles(self):
         r = self.on_screen_cells_rect()
-        return list(filter(lambda t: r.contains(Rect(t.xy_tuple[0], t.xy_tuple[1], 0, 0)), self.tilemap.all_tiles()))
+        return list(filter(lambda t: r.contains(Rect(t.xy_tuple[0], t.xy_tuple[1], 0, 0)), self.tilemap.all_tiles))
 
     def reveal_screen(self, move_camera_to=None, with_msg=None):
         if move_camera_to is not None:
@@ -2012,7 +2157,6 @@ class Scene:
             return list(filter(lambda b: r.contains(Rect((b.cell_x, b.cell_y, 0, 0))), self.all_baddies()))
 
     def begin_alert(self, msg, player_override=False, code_red=False):
-        baddies_to_uparm = randint(0, 1)
         if not Baddie.alert_sentinel and (not self.player_turn or player_override):
             self.times_alerted += 1
             Baddie.alert_sentinel = True
@@ -2023,15 +2167,14 @@ class Scene:
             r = Rect(self.alert_zone_rect)
             baddies_alerted = list(filter(lambda b: r.contains(Rect(b.cell_x, b.cell_y, 0, 0)) \
                 and b.responsive(), self.all_baddies()))
-            baddies_uparmed = 0
             for baddie in baddies_alerted:
                 alert_room = Baddie.num_alert_rovers < NUM_ALERT_ROVERS
                 not_chasing_player = not baddie.can_see_player and not baddie.spotter 
                 if alert_room and not_chasing_player and not baddie.alert_rover:
-                    will_uparm = baddie.equipped_weapon is None and (code_red or baddies_uparmed < baddies_to_uparm)
+                    will_uparm = baddie.equipped_weapon is None and (code_red or not self.baddie_uparmed_this_turn)
                     if will_uparm:
                         self.uparm_baddie(baddie)
-                        baddies_uparmed += 1
+                        self.baddie_uparmed_this_turn = True
                     baddie.investigating = True
                     baddie.patrol_path = None
                     self.remove_from_movers(baddie)
@@ -2055,11 +2198,11 @@ class Scene:
                 baddie.patrol_path = self.shortest_path(baddie.cell_xy(), self.player.cell_xy(), \
                     pre_dmap=self.distance_map_to_player) 
                 self.add_baddie_to_movers(baddie)
-                if self.debug:
-                    self.push_to_console("baddie chasing player")
             baddie.can_see_player = True
             baddie.investigating = False
             baddie.spotter = True
+            self.animation_lock = True
+            self.handle_blurb(baddie.spot_blurb(), baddie) 
             self.actor_ai_baddie(baddie) 
 
         if local_origin is not None:
@@ -2081,8 +2224,6 @@ class Scene:
             elif not can_see_player and baddie.can_see_player and not baddie.investigating:
                 baddie.can_see_player = False
                 baddie.investigating = True
-                if self.debug:
-                    self.push_to_console("baddie investigating")
             elif baddie.can_see_player and self.player_turn: 
                 spot(baddie)
             elif undiscovered_body is not None and not can_see_player:
@@ -2111,10 +2252,10 @@ class Scene:
         self.on_screen_smoke_group.empty()
         topleft = self.get_topleft_cell()
         def actor_visible(actor) -> bool:
-            if actor.on_screen(topleft, self.screen_wh_cells_tuple) or self.debug:
-                if self.tilemap.get_tile(actor.cell_xy()) in self.player.tiles_can_see or self.debug:
+            if actor.on_screen(topleft, self.screen_wh_cells_tuple) or self.show_all_actors:
+                if self.tilemap.get_tile(actor.cell_xy()) in self.player.tiles_can_see or self.show_all_actors:
                     return True
-                elif (self.tilemap.get_tile(actor.cell_xy()).seen and isinstance(actor, Loot)) or self.debug:
+                elif (self.tilemap.get_tile(actor.cell_xy()).seen and isinstance(actor, Loot)) or self.show_all_actors:
                     return True
             return False
         for actor in self.actors_group:
@@ -2144,8 +2285,6 @@ class Scene:
         for mover in self.invisible_movers + self.visible_movers:
             if mover.actor.on_screen(topleft, self.screen_wh_cells_tuple) \
                 and self.tilemap.get_tile(mover.actor.cell_xy()) in self.player.tiles_can_see:
-                visible.append(mover)
-            elif self.debug:
                 visible.append(mover)
             else:
                 invisible.append(mover)

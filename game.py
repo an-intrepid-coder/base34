@@ -21,9 +21,14 @@ class Game:
         self.screen_wh_cells_tuple = (self.MAP_DISPLAY_SIZE[0] // CELL_SIZE, self.MAP_DISPLAY_SIZE[1] // CELL_SIZE)
         self.screen.set_colorkey(ALPHA_KEY)
         self.clock = pygame.time.Clock()
-        self.debug = False
+        self.show_fps = False
+        self.show_all_actors = False
+        self.reveal_map_at_start = False
+        self.debug_hangers = False
+        self.give_player_all_tracking_info = False
         self.show_bldg_numbers = False
         self.show_move_dscore = False
+        self.move_all_actors_quickly = False
         # loot base surf
         self.loot_base_surf = pygame.image.load(LOOT_BASE_PATH)
         self.loot_base_surf.convert_alpha()
@@ -55,8 +60,8 @@ class Game:
         self.huh_base.set_colorkey(ALPHA_KEY)
         self.huh_base.fill(ALPHA_KEY)
         self.huh_base.blit(huh_txt, (self.huh_base.get_width() // 2 - huh_txt.get_width() // 2, 1))
-        # zzz sheet NOTE: this may be wonky with more than 1 letter
-        zzz_txt = self.hud_font.render("zzz", True, "yellow")  # TODO: might require a special font size by itself
+        # zzz sheet 
+        zzz_txt = self.hud_font.render("zzz", True, "yellow")  
         self.zzz_base = pygame.Surface((CELL_SIZE, CELL_SIZE), flags=SRCALPHA)
         self.zzz_base.set_colorkey(ALPHA_KEY)
         self.zzz_base.fill(ALPHA_KEY)

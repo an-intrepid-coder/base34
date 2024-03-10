@@ -195,6 +195,8 @@ class Player(Actor):
         self.visible_baddies = []
         self.actions_available = []
         self.building_patrol_intels = []
+        self.melee_overwatch = False 
+        self.lethal_overwatch = False
 
     def sort_inventory(self):
         equipped = []
@@ -240,8 +242,45 @@ class Baddie(Actor):
         self.local_rover = False
         self.alert_rover = False
         self.building_number = None
+        self.blurbed_this_turn = False
         self.faction = "baddie"
         self.name = "Baddie"
+
+    def spot_blurb(self) -> str:
+        return choice(["'halt!'", "'hey!'", "'stop right there!'", "'don't move!'"])
+
+    def got_em_blurb(self) -> str:
+        return choice(["'hah, he wasn't so tough...'", "'that'll teach you!'", "'whew, got 'em...'"])
+
+    def random_blurb(self) -> str:
+        blurbs = [
+            "*hums to self*",
+            "*whistles*",
+            "*checks shoe*",
+            "*indistinct radio noises*",
+        ]
+        if self.patrol_path is None:
+            blurbs.extend([
+                "*twiddles thumbs*",
+                "*does a little dance*",
+                "*smokes a cigarette*",
+            ])
+        if self.investigating:
+            blurbs.extend([
+                "'...around here somewhere...'",
+                "*looks around*",
+                "'wonder where he went...'",
+                "'won't let him get me!'",
+                "'gotta find that guy'",
+                "'they said he was around here...'",
+            ])
+        if self.equipped_weapon is not None:
+            blurbs.extend([
+                "*checks ammo*", 
+                "*flips safety on and off*", 
+                "*aims at nothing in particular*"
+            ])
+        return choice(blurbs)
 
     def set_long_rover(self):
         self.long_rover = True
